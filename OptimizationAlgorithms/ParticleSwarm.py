@@ -1,9 +1,7 @@
-import random as rd
 import numpy as np
-import math
 import copy
 import time
-import UnitTests
+from . import UnitTests
 
 GLOBAL_TIME_UPDATE_FREQUENCY = 5  # update frequency for specific verbosity outputs, (needs a better explanation.)
 
@@ -15,7 +13,7 @@ class ParticleSwarmOptimization:
 
     # locals are stored in a dict because then they can be set
     # for a general case in addition to specific run by run cases
-    locals = {  # Set of local variables for running the optimizer
+    __locals = {  # Set of local variables for running the optimizer
         "fitness_function": None,  # Function to be optimized: POINT -> VALUE
         "population_size": -1,  # How large should the population be
 
@@ -25,6 +23,7 @@ class ParticleSwarmOptimization:
         "generations": 50,  # How many generations to run the algorithm for
 
         "axes": None,  # (list(tuple(float))) What are the axes of the algorithm
+        "point_count": 1,  # (int) Number of points to optimize on
         "weighting_bias": lambda x: x,  # Bias function for weighting... NOT IMPLEMENTED YET
         "PSO_VELOCITY_WEIGHT": .5,  # Particle swarm optimization velocity weight
         "PSO_INDIVIDUAL_WEIGHT": .2,  # Particle swarm optimization individual's highest found point weight
@@ -35,7 +34,14 @@ class ParticleSwarmOptimization:
         "starting_velocity_ranges": None,  # The starting velocity ranges of the
         "starting_velocity_function": None,  # (int -> list(tuple(float)) -> list(tuple(float)) -> np.array(float))
         # function that takes in the size of the population and the velocity ranges and outputs the starting velocities
+
+        "seed": None,  # random seed for each run. if none a fresh random seed will be generated each time
     }
+
+    glob = np.empty(100)
+    guub = np.empty(100)
+    glub = np.empty(100)
+    globi = 0
 
     def __init__(self, params={}, verbosity=0, testing_level=1, testing_verbosity=1):
         """
@@ -81,7 +87,7 @@ class ParticleSwarmOptimization:
                     if not [self.testing_unit.c_test_weighting_bias][["weighting_bias"].index(param)](value):
                         raise ValueError("Bad " + param + " input. See log or raise testing verbosity.")
 
-        locals[param] = value  # Security Risk
+        self.__locals[param] = value  # Security Risk
         return 1  # Success
 
     def get_locals_copy(self):  # this function has none of its own testing because of its simplicity
@@ -91,7 +97,7 @@ class ParticleSwarmOptimization:
         Returns:
             dict: copy of self.locals
         """
-        return copy.deepcopy(self.locals)  # a copy is made so no changes propagate after function call
+        return copy.deepcopy(self.__locals)  # a copy is made so no changes propagate after function call
 
     def step(self, particles, best_state, best_fitness, run_locals):
         """
@@ -110,12 +116,15 @@ class ParticleSwarmOptimization:
         """
         # continuous testing of inputs
         if self.testing_unit.testing_level > 1 and not self.testing_unit.c_test_step_inp(particles,
-                                                                                           best_state,
-                                                                                           best_fitness,
-                                                                                           run_locals):
+                                                                                         best_state,
+                                                                                         best_fitness,
+                                                                                         run_locals):
             raise ValueError("step won't run, input's aren't valid.")
         # apply the fitness function to get this generations fitness values
-        fitness = np.apply_along_axis(run_locals["fitness_function"], 1, particles[:, 0, :])
+        fitness = np.empty((particles.shape[0]))
+        #fitness = np.apply_along_axis(run_locals["fitness_function"], 0, particles[:, 0, :, :])  # hopefully works
+        for i in range(particles.shape[0]):
+            fitness[i] = run_locals["fitness_function"](particles[i, 0])
 
         # find any personal improvements
         better = best_fitness < fitness
@@ -128,6 +137,7 @@ class ParticleSwarmOptimization:
         best_of_group = np.argmax(best_fitness, axis=0)
 
         if self.verbosity > 6:  # some random high verbosity outputs that were once used for debugging, might give ideas
+            print("step high verb: ")
             print(particles[0])
             print(particles[:, 1].shape)
             print(best_state.shape)
@@ -136,13 +146,41 @@ class ParticleSwarmOptimization:
         # run calculation for the velocity calculation
         # Maurice Clerc. Standard Particle Swarm Optimisation. 2012. hal-00764996
         particles[:, 1] = (run_locals["PSO_VELOCITY_WEIGHT"] * particles[:, 1] +
-                           run_locals["PSO_INDIVIDUAL_WEIGHT"] * rd.random() * (best_state - particles[:, 1]) +
-                           run_locals["PSO_GROUP_WEIGHT"] * rd.random() * (np.repeat(best_state[best_of_group][np.newaxis, :],
-                                                                                     particles[:, 1].shape[0], axis=0)
-                                                                           - particles[:, 1]))
+                           run_locals["PSO_INDIVIDUAL_WEIGHT"] * np.random.rand(particles[:, 0].shape[0],
+                                                                                particles[:, 0].shape[1],
+                                                                                particles[:, 0].shape[2]) *
+                           (best_state - particles[:, 0]) +
+                           run_locals["PSO_GROUP_WEIGHT"] * np.random.rand(particles[:, 0].shape[0],
+                                                                           particles[:, 0].shape[1],
+                                                                           particles[:, 0].shape[2]) *
+                           (best_state[best_of_group] - particles[:, 0]))
 
         # run calculation for point calculation
         particles[:, 0] = particles[:, 0] + particles[:, 1]
+        #if True and ((particles[:, 0] < np.array(run_locals["axes"])[:, 0]).any() or \
+        #        (particles[:, 0] > np.array(run_locals["axes"])[:, 1]).any()):
+            #print(particles[:, 0].shape)
+            #mask = np.logical_or(particles[:, 0] < np.array(run_locals["axes"])[:, 0],
+            #              particles[:, 0] > np.array(run_locals["axes"])[:, 1])
+            #print(particles.shape)
+            #print(np.arange(particles.shape[0]).shape)
+            #print(np.arange(particles.shape[0])[mask])
+            #print(particles[np.argmax(mask), 1])
+        # clip the particles to be within the axes
+        particles[:, 0] = np.clip(particles[:, 0],
+                                  np.array(run_locals["axes"])[:, 0],
+                                  np.array(run_locals["axes"])[:, 1])
+        #if self.globi < 10:
+        #    self.glob[self.globi] = particles[0, 0, 0, 0]
+        #    self.guub[self.globi] = particles[0, 1, 0, 0]
+        #    self.glub[self.globi] = best_state[best_of_group][0, 0]
+        #    self.globi += 1
+        #else:
+            #print(self.glob[:10])
+            #print(self.guub[:10])
+            #print(self.glub[:10])
+            #raise ValueError(self.glob)
+
         return particles, best_state, best_fitness
 
     def run(self, temp_params={}):
@@ -158,7 +196,7 @@ class ParticleSwarmOptimization:
             np.array: choice with maximum value of all particles
         """
         # continuous testing of inputs
-        if self.testing_unit.testing_level > 1 and not self.testing_unit.c_test_step_inp(temp_params, self.locals):
+        if self.testing_unit.testing_level > 1 and not self.testing_unit.c_test_step_inp(temp_params, self.__locals):
             raise ValueError("run won't run, input's aren't valid.")
 
         # continuous testing of functional inputs
@@ -169,24 +207,34 @@ class ParticleSwarmOptimization:
                         raise ValueError("Bad " + key + " input. See log or raise testing verbosity.")
 
         # set the single run locals
-        run_locals = copy.deepcopy(self.locals)
+        run_locals = copy.deepcopy(self.__locals)
         for param, value in temp_params.items():
             run_locals[param] = value
 
+        # sets random seed
+        if run_locals["seed"] is None:
+            np.random.seed()
+        else:
+            np.random.seed(run_locals["seed"])
+
         # initialize all arrays
         # current state of particles
-        particles = np.full((run_locals["population_size"], 2, len(run_locals["axes"])), -1, dtype=float)
+        particles = np.full((run_locals["population_size"], 2, run_locals["point_count"], len(run_locals["axes"])), -1, dtype=float)
         # best fitness value achieved
         best_fitness = np.zeros((run_locals["population_size"]))
-        # state that each particle is when it found its best fitness value
-        best_state = np.full((run_locals["population_size"], len(run_locals["axes"])), -1, dtype=float)
+        # state that each particle is when it found its best fitness value (old)
+        # best_state = np.full((run_locals["population_size"], run_locals["point_count"], len(run_locals["axes"])), -1, dtype=float)
         # initialize particles numbers
-        for j in range(particles.shape[2]):
-            particles[:, 0, j] = np.random.uniform(low=run_locals["axes"][j][0], high=run_locals["axes"][j][1], size=particles.shape[0])
+        for j in range(particles.shape[3]):
+            particles[:, 0, :, j] = np.random.uniform(low=run_locals["axes"][j][0], high=run_locals["axes"][j][1],
+                                                      size=(particles.shape[0], particles.shape[2]))
             if not run_locals["starting_velocity_ranges"]:
-                particles[:, 1, j] = 0  # zero starting velocity
+                particles[:, 1, :, j] = 0  # zero starting velocity
             else:
                 raise NotImplementedError("Functional starting velocities aren't implemented yet")
+
+        # state that each particle is when it found its best fitness value
+        best_state = np.copy(particles[:, 0])
 
         # this generally shouldn't be a program, can be removed after some use where this value error doesn't appear
         if self.testing_unit.testing_level > 1:  # the rare in implementation testing
@@ -194,17 +242,17 @@ class ParticleSwarmOptimization:
                 if i == -1:
                     raise ValueError("This program didn't properly initialize its particles array")
 
-        # split into different termination criteria
         if run_locals["end_condition"] == "time_constraint":
             start_time = time.time()  # initial starting time
             last_update = time.time()  # last time an update was printed (for verbosity > 1 only)
 
-            # start the main loop
             while time.time() < start_time + run_locals["time_constraint"]:
-                # some outputs based on verbosity
                 if self.verbosity > 3:
+                    print("loop high verb: ")
                     print(particles)
+                    print("----")
                     print(best_state)
+                    print("----")
                     print(best_fitness)
                 elif self.verbosity > 1:
                     if time.time() < last_update + GLOBAL_TIME_UPDATE_FREQUENCY:
@@ -218,7 +266,6 @@ class ParticleSwarmOptimization:
             return best_state[np.argmax(best_fitness, axis=0)]
         elif run_locals["end_condition"] == "generations":
             for _ in range(run_locals["generations"]):
-                # some outputs based on verbosity
                 if self.verbosity > 3:
                     print(particles)
                     print(best_state)
@@ -232,7 +279,7 @@ class ParticleSwarmOptimization:
             # once done return the best state
             return best_state[np.argmax(best_fitness, axis=0)]
         else:
-            raise ValueError("This line should never be reached")
+            raise ValueError("End condition incorrectly set")
 
 
 
